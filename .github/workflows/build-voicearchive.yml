@@ -29,9 +29,19 @@ jobs:
           s = p.read_text(encoding='utf-8')
           s = s.replace('repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); ', '')
           p.write_text(s, encoding='utf-8')
+
           p = Path('app/src/main/java/com/openai/voicearchive/MainActivity.java')
           s = p.read_text(encoding='utf-8')
           s = s.replace('new AlertDialog.Builder(this).setTitle("صدا تأیید نشد")', 'new AlertDialog.Builder(MainActivity.this).setTitle("صدا تأیید نشد")')
+          s = s.replace('VoiceEngine.capture(null,2200,', 'VoiceEngine.capture(this,null,2200,')
+          s = s.replace('VoiceEngine.capture(wav,4000,', 'VoiceEngine.capture(this,wav,4000,')
+          p.write_text(s, encoding='utf-8')
+
+          p = Path('app/src/main/java/com/openai/voicearchive/VoiceEngine.java')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('package com.openai.voicearchive;\n\nimport android.media.AudioFormat;', 'package com.openai.voicearchive;\n\nimport android.Manifest;\nimport android.content.Context;\nimport android.content.pm.PackageManager;\nimport android.media.AudioFormat;')
+          s = s.replace('public static void capture(final File outFile, final int millis, final Callback cb){', 'public static void capture(final Context context, final File outFile, final int millis, final Callback cb){')
+          s = s.replace('AudioRecord rec=null; try{\n                int min=', 'AudioRecord rec=null; try{\n                if(context==null || context.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) throw new SecurityException("مجوز میکروفون داده نشده است");\n                int min=')
           p.write_text(s, encoding='utf-8')
           PY
 
