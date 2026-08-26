@@ -11,7 +11,7 @@ permissions:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,7 +20,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat voicearchive.project.part1 voicearchive.project.part2 voicearchive.project.part3 voicearchive.project.part4 | base64 -d | tar -xz
+          base64 -d voicearchive.project.b64 | tar -xz
           cp -a VoiceArchiveAndroid/. .
           rm -rf VoiceArchiveAndroid
           python3 - <<'PY'
@@ -28,20 +28,6 @@ jobs:
           p = Path('settings.gradle')
           s = p.read_text(encoding='utf-8')
           s = s.replace('repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); ', '')
-          p.write_text(s, encoding='utf-8')
-
-          p = Path('app/src/main/java/com/openai/voicearchive/MainActivity.java')
-          s = p.read_text(encoding='utf-8')
-          s = s.replace('new AlertDialog.Builder(this).setTitle("صدا تأیید نشد")', 'new AlertDialog.Builder(MainActivity.this).setTitle("صدا تأیید نشد")')
-          s = s.replace('VoiceEngine.capture(null,2200,', 'VoiceEngine.capture(this,null,2200,')
-          s = s.replace('VoiceEngine.capture(wav,4000,', 'VoiceEngine.capture(this,wav,4000,')
-          p.write_text(s, encoding='utf-8')
-
-          p = Path('app/src/main/java/com/openai/voicearchive/VoiceEngine.java')
-          s = p.read_text(encoding='utf-8')
-          s = s.replace('package com.openai.voicearchive;\n\nimport android.media.AudioFormat;', 'package com.openai.voicearchive;\n\nimport android.Manifest;\nimport android.content.Context;\nimport android.content.pm.PackageManager;\nimport android.media.AudioFormat;')
-          s = s.replace('public static void capture(final File outFile, final int millis, final Callback cb){', 'public static void capture(final Context context, final File outFile, final int millis, final Callback cb){')
-          s = s.replace('AudioRecord rec=null; try{\n                int min=', 'AudioRecord rec=null; try{\n                if(context==null || context.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) throw new SecurityException("مجوز میکروفون داده نشده است");\n                int min=')
           p.write_text(s, encoding='utf-8')
           PY
 
@@ -68,22 +54,53 @@ jobs:
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Lint and build debug APK
+      - name: Lint and build release APK
         shell: bash
-        run: gradle --no-daemon :app:lintDebug :app:assembleDebug
+        run: gradle --no-daemon :app:lintRelease :app:assembleRelease
 
-      - name: Verify APK package and signature
+      - name: Sign release APK
         shell: bash
         run: |
           set -euo pipefail
-          APK=app/build/outputs/apk/debug/app-debug.apk
+          keytool -genkeypair -v \
+            -keystore /tmp/voicearchive-release.jks \
+            -storepass VoiceArchive_2026_Sign \
+            -keypass VoiceArchive_2026_Sign \
+            -alias voicearchive \
+            -keyalg RSA -keysize 3072 -validity 10000 \
+            -sigalg SHA256withRSA \
+            -dname "CN=VoiceArchive, OU=Mobile, O=VoiceArchive, L=Baku, C=AZ"
+          UNSIGNED=app/build/outputs/apk/release/app-release-unsigned.apk
+          OUT=app/build/outputs/apk/release/VoiceArchive-v1.1.0-release.apk
+          test -s "$UNSIGNED"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
+            --ks /tmp/voicearchive-release.jks \
+            --ks-key-alias voicearchive \
+            --ks-pass pass:VoiceArchive_2026_Sign \
+            --key-pass pass:VoiceArchive_2026_Sign \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out "$OUT" "$UNSIGNED"
+
+      - name: Verify release security and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/VoiceArchive-v1.1.0-release.apk
           test -s "$APK"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" | tee /tmp/signature.txt
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.openai.voicearchive'" /tmp/badging.txt
+          grep -q "versionName='1.1.0'" /tmp/badging.txt
           grep -q "launchable-activity: name='com.openai.voicearchive.MainActivity'" /tmp/badging.txt
+          grep -q "uses-permission: name='android.permission.RECORD_AUDIO'" /tmp/badging.txt
+          ! grep -q "android.permission.INTERNET" /tmp/badging.txt
+          ! grep -q "application-debuggable" /tmp/badging.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" /tmp/signature.txt
+          grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" /tmp/signature.txt
 
-      - name: Install and launch on Android emulator
+      - name: Install and launch release on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 29
@@ -92,15 +109,18 @@ jobs:
           disable-animations: true
           script: |
             set -e
-            adb install -r app/build/outputs/apk/debug/app-debug.apk
-            adb shell am start -W -n com.openai.voicearchive/.MainActivity
-            sleep 3
+            APK=app/build/outputs/apk/release/VoiceArchive-v1.1.0-release.apk
+            adb install -r "$APK"
+            adb shell pm grant com.openai.voicearchive android.permission.RECORD_AUDIO
+            adb shell am start -n com.openai.voicearchive/.MainActivity
+            sleep 5
             adb shell pidof com.openai.voicearchive
+            adb shell dumpsys package com.openai.voicearchive | grep -q "android.permission.RECORD_AUDIO: granted=true"
 
-      - name: Upload APK
+      - name: Upload release APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceArchive-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: VoiceArchive-v1.1.0-release
+          path: app/build/outputs/apk/release/VoiceArchive-v1.1.0-release.apk
           if-no-files-found: error
