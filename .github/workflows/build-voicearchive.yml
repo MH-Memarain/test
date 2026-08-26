@@ -108,9 +108,7 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
-            set -e
-            APK=app/build/outputs/apk/release/VoiceArchive-v1.1.0-release.apk
-            adb install -r "$APK"
+            adb install -r app/build/outputs/apk/release/VoiceArchive-v1.1.0-release.apk
             adb shell pm grant com.openai.voicearchive android.permission.RECORD_AUDIO
             adb shell am start -n com.openai.voicearchive/.MainActivity
             sleep 5
