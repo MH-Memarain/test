@@ -1,0 +1,90 @@
+name: Build VoiceArchive APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Recreate Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat voicearchive.project.part1 voicearchive.project.part2 voicearchive.project.part3 voicearchive.project.part4 | base64 -d | tar -xz
+          cp -a VoiceArchiveAndroid/. .
+          rm -rf VoiceArchiveAndroid
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('settings.gradle')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); ', '')
+          p.write_text(s, encoding='utf-8')
+          p = Path('app/src/main/java/com/openai/voicearchive/MainActivity.java')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('new AlertDialog.Builder(this).setTitle("صدا تأیید نشد")', 'new AlertDialog.Builder(MainActivity.this).setTitle("صدا تأیید نشد")')
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Ensure Android SDK 35
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Lint and build debug APK
+        shell: bash
+        run: gradle --no-daemon :app:lintDebug :app:assembleDebug
+
+      - name: Verify APK package and signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | tee /tmp/badging.txt
+          grep -q "package: name='com.openai.voicearchive'" /tmp/badging.txt
+          grep -q "launchable-activity: name='com.openai.voicearchive.MainActivity'" /tmp/badging.txt
+
+      - name: Install and launch on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            set -e
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb shell am start -W -n com.openai.voicearchive/.MainActivity
+            sleep 3
+            adb shell pidof com.openai.voicearchive
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceArchive-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
