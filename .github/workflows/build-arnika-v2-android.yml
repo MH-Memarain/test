@@ -1,0 +1,62 @@
+name: Build ARNIKA SESSION Android v2
+
+on:
+  push:
+    paths:
+      - 'arnika_v2_android/**'
+      - '.github/workflows/build-arnika-v2-android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Ensure SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n1)"; fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Bundle multilingual Whisper model
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p arnika_v2_android/app/src/main/assets/models
+          curl -L --fail --retry 3 -o arnika_v2_android/app/src/main/assets/models/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+          test $(stat -c%s arnika_v2_android/app/src/main/assets/models/ggml-tiny.bin) -gt 70000000
+      - name: Build and lint
+        working-directory: arnika_v2_android
+        run: gradle --no-daemon :app:assembleRelease :app:lintRelease
+      - name: Sign APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -keystore /tmp/arnika-v2.jks -storepass ArnikaV2_2026 -keypass ArnikaV2_2026 -alias arnika -keyalg RSA -keysize 3072 -validity 10000 -dname 'CN=ARNIKA SESSION, OU=Mobile, O=ARNIKA, C=AZ'
+          IN=arnika_v2_android/app/build/outputs/apk/release/app-release-unsigned.apk
+          OUT=arnika_v2_android/app/build/outputs/apk/release/ARNIKA_SESSION_v2.0.0.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign --ks /tmp/arnika-v2.jks --ks-key-alias arnika --ks-pass pass:ArnikaV2_2026 --key-pass pass:ArnikaV2_2026 --v2-signing-enabled true --v3-signing-enabled true --out "$OUT" "$IN"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$OUT"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$OUT" | tee /tmp/badging.txt
+          grep -q "package: name='com.arnika.session'" /tmp/badging.txt
+          grep -q "versionName='2.0.0'" /tmp/badging.txt
+          grep -q "application-label:'ARNIKA SESSION'" /tmp/badging.txt
+          test $(stat -c%s "$OUT") -gt 80000000
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ARNIKA_SESSION_Android_v2.0.0
+          path: arnika_v2_android/app/build/outputs/apk/release/ARNIKA_SESSION_v2.0.0.apk
+          if-no-files-found: error
