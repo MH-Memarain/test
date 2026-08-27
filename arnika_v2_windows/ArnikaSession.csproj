@@ -9,7 +9,6 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>false</PublishSingleFile>
     <AssemblyName>ARNIKA_SESSION</AssemblyName>
-    <ApplicationIcon>arnika.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
