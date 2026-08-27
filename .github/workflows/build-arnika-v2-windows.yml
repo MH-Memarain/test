@@ -1,0 +1,67 @@
+name: Build ARNIKA SESSION Windows v2
+
+on:
+  push:
+    paths:
+      - 'arnika_v2_windows/**'
+      - '.github/workflows/build-arnika-v2-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Publish self-contained app
+        shell: pwsh
+        run: |
+          dotnet restore arnika_v2_windows/ArnikaSession.csproj
+          dotnet publish arnika_v2_windows/ArnikaSession.csproj -c Release -r win-x64 --self-contained true -o arnika_v2_windows/publish
+      - name: Add whisper.cpp and multilingual model
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force arnika_v2_windows/publish/tools | Out-Null
+          New-Item -ItemType Directory -Force arnika_v2_windows/publish/models | Out-Null
+          Invoke-WebRequest -Uri 'https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-x64.zip' -OutFile whisper.zip
+          Expand-Archive whisper.zip -DestinationPath whisper -Force
+          $cli = Get-ChildItem whisper -Recurse -Filter whisper-cli.exe | Select-Object -First 1
+          if (-not $cli) { throw 'whisper-cli.exe not found' }
+          Copy-Item $cli.Directory.FullName\* arnika_v2_windows/publish/tools -Recurse -Force
+          Invoke-WebRequest -Uri 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin' -OutFile arnika_v2_windows/publish/models/ggml-tiny.bin
+          if ((Get-Item arnika_v2_windows/publish/models/ggml-tiny.bin).Length -lt 70000000) { throw 'Whisper model download incomplete' }
+      - name: Add static FFmpeg
+        shell: pwsh
+        run: |
+          choco install ffmpeg -y --no-progress
+          $ff=(Get-Command ffmpeg.exe).Source
+          if (-not (Test-Path $ff)) { throw 'ffmpeg.exe not found' }
+          Copy-Item $ff arnika_v2_windows/publish/tools/ffmpeg.exe -Force
+      - name: Self-test packaged app
+        shell: pwsh
+        run: |
+          & arnika_v2_windows/publish/ARNIKA_SESSION.exe --self-test
+          if ($LASTEXITCODE -ne 0) { throw "ARNIKA self-test failed: $LASTEXITCODE" }
+          & arnika_v2_windows/publish/tools/whisper-cli.exe --version
+          & arnika_v2_windows/publish/tools/ffmpeg.exe -version
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc='C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc arnika_v2_windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
+          $setup=Get-Item arnika_v2_windows/installer_out/ARNIKA_SESSION_Windows_Setup_v2.0.0.exe
+          if ($setup.Length -lt 80000000) { throw 'Installer unexpectedly small' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ARNIKA_SESSION_Windows_v2.0.0
+          path: arnika_v2_windows/installer_out/ARNIKA_SESSION_Windows_Setup_v2.0.0.exe
+          if-no-files-found: error
