@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <application
         android:allowBackup="false"
+        android:usesCleartextTraffic="false"
         android:label="ARNIKA SESSION"
         android:icon="@drawable/ic_arnika"
         android:roundIcon="@drawable/ic_arnika"
